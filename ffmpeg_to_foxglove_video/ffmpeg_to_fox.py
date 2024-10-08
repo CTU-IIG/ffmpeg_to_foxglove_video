@@ -85,6 +85,8 @@ class App():
 
         try:
             input_path = self.args.rosbag
+            if str.endswith(input_path, ".mcap") or str.endswith(input_path, "metadata.yaml"):
+                input_path = input_path[:str.rindex(input_path, '/')]
             print(f"Input rosbag path: {input_path}")
             self.reader = rosbag2_py.SequentialReader()
             storage_options = rosbag2_py._storage.StorageOptions(
@@ -92,22 +94,22 @@ class App():
                 storage_id='mcap')
             converter_options = rosbag2_py._storage.ConverterOptions('', '')
             self.reader.open(storage_options, converter_options)
+        except RuntimeError as ex:
+            if str.startswith(ex.args[0], 'No storage could be initialized from the inputs'):
+                print(f'A rosbag does not exist on the path or it is not ROS2 bag ("{input_path}").', file=sys.stderr)
+                return 1
         except Exception as ex:
-            template = 'An exception of type {0} occurred. Arguments:\n{1!r}'
-            message = template.format(type(ex).__name__, ex.args)
-            print(message)
             raise
 
-
         try:
-            output_path = self.args.rosbag
+            output_path = input_path
             if self.args.output in ['', '.', '..', '/', './', '../']:
                 if self.args.output:
                     output_path = str(self.args.output).rstrip('/')
                     + '/'
-                    + str(self.args.rosbag).lstrip('./')
+                    + str(input_path).lstrip('./')
                 else:
-                    output_path = str(self.args.rosbag).lstrip('./')
+                    output_path = str(input_path).lstrip('./')
             elif self.args.output not in ['', '.', '..', '/', './', '../']:
                 output_path = self.args.output
 
