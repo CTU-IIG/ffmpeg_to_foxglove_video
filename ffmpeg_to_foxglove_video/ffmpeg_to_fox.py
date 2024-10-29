@@ -30,12 +30,13 @@ from collections import deque
 import sys
 import os
 import errno
+from pathlib import Path
 
-def try_remove_empty_rosbag(path):
+def try_remove_empty_rosbag(path:Path):
     try:
         for file in os.listdir(path):
-            print(f"removing {path}/{file}")
-            os.remove(path+"/"+file)
+            print(f"removing {path/file}")
+            os.remove(path/file)
         print(f"removing {path}")
         os.rmdir(path)
     except OSError as ex:
@@ -43,6 +44,29 @@ def try_remove_empty_rosbag(path):
             raise
         else:
             print("not exist")
+
+def is_readable(path):
+    file_path = Path(path)
+    can_read = os.access(file_path, os.R_OK)
+    return can_read
+
+def is_writable(path):
+    file_path = Path(path)
+    can_write = os.access(file_path, os.W_OK)
+    return can_write
+
+def is_first_existing_parent_writable(path):
+    file_path = Path(path)
+    writable = False
+    file_path = file_path.expanduser().resolve()
+    while (file_path != Path("/")):
+        if not file_path.exists():
+            file_path = file_path.parent
+        else:
+            print(file_path)
+            writable = is_writable(file_path)
+            break
+    return writable
 
 # Foxglove message record:
 # print(msg[0],
@@ -78,42 +102,54 @@ def try_remove_empty_rosbag(path):
 # foxglove_msgs/msg/CompressedVideo
 
 class App():
+    ERROR = 1
+    OK = 0
+
     def __init__(self, args):
         self.args = args
 
     def run(self):
-
+        input_path = Path(self.args.rosbag).expanduser().resolve()
+        # rosbag2 reader do not handle bad rosbag path well, we should check for user errors
+        if not input_path.exists():
+            print(f'The input rosbag does not exist on the path ("{input_path}").', file=sys.stderr)
+            return App.ERROR
+        if not input_path.is_dir():
+            print(f'A file is selected as input rosbag but directory is needed ("{input_path}").', file=sys.stderr)
+            return App.ERROR
+        if not is_readable(input_path):
+            print(f'A rosbag does not exist on the path or it is not ROS2 bag ("{input_path}").', file=sys.stderr)
+            return App.ERROR
         try:
-            input_path = self.args.rosbag
-            if str.endswith(input_path, ".mcap") or str.endswith(input_path, "metadata.yaml"):
-                input_path = input_path[:str.rindex(input_path, '/')]
-            print(f"Input rosbag path: {input_path}")
             self.reader = rosbag2_py.SequentialReader()
             storage_options = rosbag2_py._storage.StorageOptions(
                 uri=input_path,
                 storage_id='mcap')
             converter_options = rosbag2_py._storage.ConverterOptions('', '')
             self.reader.open(storage_options, converter_options)
-        except RuntimeError as ex:
-            if str.startswith(ex.args[0], 'No storage could be initialized from the inputs'):
-                print(f'A rosbag does not exist on the path or it is not ROS2 bag ("{input_path}").', file=sys.stderr)
-                return 1
         except Exception as ex:
             raise
 
+        output_path = input_path
+        # rosbag2 writer do not handle bad rosbag path well and can cause side-effects
+        # like creating empty database or writing to existing database
+        # we should check the path for user errors
+        if self.args.output == '':
+            output_path = Path(self.args.output).expanduser().resolve()
+        output_path = output_path.parent/Path(f"{output_path.name}{self.args.output_suffix}")
+        # If Path exists
+        if output_path.exists():
+            #and If it is directory, is it empty?
+            if output_path.is_dir():
+                if len(list(output_path.iterdir())) > 0:
+                    print(f'Output directory exists but it is not empty ("{output_path}").', file=sys.stderr)
+                    return App.ERROR
+        # Can we create the directory and files in it?
+        is_writable = is_first_existing_parent_writable(output_path)
+        if not is_writable:
+            print(f'The user do not have permissions to write the path ("{output_path}").', file=sys.stderr)
+            return App.ERROR
         try:
-            output_path = input_path
-            if self.args.output in ['', '.', '..', '/', './', '../']:
-                if self.args.output:
-                    output_path = str(self.args.output).rstrip('/')
-                    + '/'
-                    + str(input_path).lstrip('./')
-                else:
-                    output_path = str(input_path).lstrip('./')
-            elif self.args.output not in ['', '.', '..', '/', './', '../']:
-                output_path = self.args.output
-
-            output_path += str(self.args.output_suffix)
             print(f"Output rosbag path: {output_path}")
             self.writer = rosbag2_py.SequentialWriter()
             storage_options = rosbag2_py._storage.StorageOptions(
@@ -121,20 +157,9 @@ class App():
                 storage_id='mcap')
             converter_options = rosbag2_py._storage.ConverterOptions('', '')
             self.writer.open(storage_options, converter_options)
-        except RuntimeError as ex:
-            if str.startswith(ex.args[0], 'Database directory already exists'):
-                print(f'Output file already exists ("{output_path}").', file=sys.stderr)
-                return 1
-            elif str.startswith(ex.args[0], 'Failed to create database directory'):
-                print(f'Failed to create output directory ("{output_path}"). Do you have rights for this?', file=sys.stderr)
-                return 1
-            # sadly, the self.writer most probably created an empty rosbag at the path
-            # already handled 'path exists' ensures that we do not remove some other rosbag
-            try_remove_empty_rosbag(output_path)
-            raise
         except Exception as ex:
             # sadly, the self.writer most probably created an empty rosbag at the path
-            # already handled 'path exists' ensures that we do not remove some other rosbag
+            # already handled 'path exists and not empty' ensures that we do not remove some other rosbag
             try_remove_empty_rosbag(output_path)
             raise
 
@@ -158,7 +183,7 @@ class App():
             print(f'Input topic does not have messages or does not exist ("{self.args.topic_from}").', file=sys.stderr)
             print(f'Nothing to process.')
             # sadly, the self.writer already created an empty rosbag at the path
-            # already handled 'path exists' ensures that we do not remove some other rosbag
+            # already handled 'path exists and not empty' ensures that we do not remove some other rosbag
             try_remove_empty_rosbag(output_path)
             return 1
         
