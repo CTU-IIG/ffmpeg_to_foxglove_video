@@ -241,10 +241,6 @@ def main():
                         help='Suffix of the output rosbag')
     args = parser.parse_args()
 
-    # we strip '/' at the end of paths to prevent issues and inconsistencies
-    args.rosbag = args.rosbag.rstrip('/')
-    args.output = args.output.rstrip('/')
-    
     app = App(args)
     try:
         exit_code = app.run()
