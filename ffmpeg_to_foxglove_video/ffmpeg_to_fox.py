@@ -31,6 +31,7 @@ import sys
 import os
 import errno
 from pathlib import Path
+import re
 
 def try_remove_empty_rosbag(path:Path):
     try:
@@ -109,6 +110,15 @@ class App():
         self.args = args
 
     def run(self):
+        #check regex if typed in
+        regex = None
+        if self.args.topic_from_regex is not None:
+            try:
+                regex = re.compile(self.args.topic_from_regex)
+            except re.error as ex:
+                print(f'The input regex is not a valid regular expression ("{self.args.topic_from_regex}").', file=sys.stderr)
+                raise
+
         input_path = Path(self.args.rosbag).expanduser().resolve()
         # rosbag2 reader do not handle bad rosbag path well, we should check for user errors
         if not input_path.exists():
@@ -166,21 +176,42 @@ class App():
         msg_count = 0
         old_metadata = self.reader.get_metadata()
         old_topics = old_metadata.topics_with_message_count
+
+        #regex data
+        matched_topics_old = []
+        matched_topics_new = []
+
         for topic_info in old_topics:
             topic = topic_info.topic_metadata
-            if (topic.name == self.args.topic_from):
-                new_topic = rosbag2_py.TopicMetadata(
-                    name = self.args.topic_to,
+            if regex is not None:
+                if (regex.fullmatch(topic.name)):
+                    matched_topics_old.append(topic.name)
+                    old_topic_path = topic.name
+                    new_topic_path = old_topic_path[:old_topic_path.rfind('/')]+'/foxglove'
+                    new_topic = rosbag2_py.TopicMetadata(
+                    name = old_topic_path,
                     serialization_format = 'cdr',
                     type = 'foxglove_msgs/msg/CompressedVideo')
-                self.writer.create_topic(new_topic)
-                msg_count = topic_info.message_count
-                print('Target topic found.')
+                    self.writer.create_topic(new_topic)
+                    matched_topics_new.append(new_topic_path)
+                    msg_count += topic_info.message_count
+                    print('Target topic found.')
+                else:
+                    self.writer.create_topic(topic)
             else:
-                self.writer.create_topic(topic)
+                if (topic.name == self.args.topic_from):
+                    new_topic = rosbag2_py.TopicMetadata(
+                        name = self.args.topic_to,
+                        serialization_format = 'cdr',
+                        type = 'foxglove_msgs/msg/CompressedVideo')
+                    self.writer.create_topic(new_topic)
+                    msg_count = topic_info.message_count
+                    print('Target topic found.')
+                else:
+                    self.writer.create_topic(topic)
         
         if msg_count == 0:
-            print(f'Input topic does not have messages or does not exist ("{self.args.topic_from}").', file=sys.stderr)
+            print(f'Input topic(s) does not have messages or does not exist.', file=sys.stderr)
             print(f'Nothing to process.')
             # sadly, the self.writer already created an empty rosbag at the path
             # already handled 'path exists and not empty' ensures that we do not remove some other rosbag
@@ -195,30 +226,60 @@ class App():
 
         while self.reader.has_next():
             msg = self.reader.read_next()
-            if (msg[0] == self.args.topic_from):
-                old_data = deserialize_message(msg[1], FFMPEGPacket)
-                new_data = CompressedVideo(
-                    timestamp=old_data.header.stamp,
-                    frame_id = old_data.header.frame_id,
-                    data = old_data.data,
-                    format='h264')
-                self.writer.write(
-                    self.args.topic_to,
-                    serialize_message(new_data), msg[2])
+            if regex is not None:
+                try:
+                    index = matched_topics_old.index(msg[0])
+                except ValueError:
+                    index = None
+                if index is not None:
+                    old_data = deserialize_message(msg[1], FFMPEGPacket)
+                    new_data = CompressedVideo(
+                        timestamp=old_data.header.stamp,
+                        frame_id = old_data.header.frame_id,
+                        data = old_data.data,
+                        format='h264')
+                    self.writer.write(
+                        matched_topics_new[index],
+                        serialize_message(new_data), msg[2])
 
-                progress += 1
-                time_now = time.time()
-                time_per_single_window.append((time_now-time_start)/progress)
-                time_per_single = max(time_per_single_window)
-                progress_perc = (progress*100)/msg_count
-                progress_msg = '{:3.0f} %'.format(progress_perc)
-                if progress_msg != last_progress_msg:
-                    last_progress_msg = progress_msg
-                    print(progress_msg + ' - est. remaining time {:.0f}:{:02.0f}'.format(
-                        time_per_single * (msg_count + 1 - progress) // 60,
-                        time_per_single * (msg_count + 1 - progress) % 60))
+                    progress += 1
+                    time_now = time.time()
+                    time_per_single_window.append((time_now-time_start)/progress)
+                    time_per_single = max(time_per_single_window)
+                    progress_perc = (progress*100)/msg_count
+                    progress_msg = '{:3.0f} %'.format(progress_perc)
+                    if progress_msg != last_progress_msg:
+                        last_progress_msg = progress_msg
+                        print(progress_msg + ' - est. remaining time {:.0f}:{:02.0f}'.format(
+                            time_per_single * (msg_count + 1 - progress) // 60,
+                            time_per_single * (msg_count + 1 - progress) % 60))
+                else:
+                    self.writer.write(msg[0], msg[1], msg[2])
             else:
-                self.writer.write(msg[0], msg[1], msg[2])
+                if (msg[0] == self.args.topic_from):
+                    old_data = deserialize_message(msg[1], FFMPEGPacket)
+                    new_data = CompressedVideo(
+                        timestamp=old_data.header.stamp,
+                        frame_id = old_data.header.frame_id,
+                        data = old_data.data,
+                        format='h264')
+                    self.writer.write(
+                        self.args.topic_to,
+                        serialize_message(new_data), msg[2])
+
+                    progress += 1
+                    time_now = time.time()
+                    time_per_single_window.append((time_now-time_start)/progress)
+                    time_per_single = max(time_per_single_window)
+                    progress_perc = (progress*100)/msg_count
+                    progress_msg = '{:3.0f} %'.format(progress_perc)
+                    if progress_msg != last_progress_msg:
+                        last_progress_msg = progress_msg
+                        print(progress_msg + ' - est. remaining time {:.0f}:{:02.0f}'.format(
+                            time_per_single * (msg_count + 1 - progress) // 60,
+                            time_per_single * (msg_count + 1 - progress) % 60))
+                else:
+                    self.writer.write(msg[0], msg[1], msg[2])
         print("Done")
         return 0
 
@@ -227,9 +288,12 @@ def main():
     parser = argparse.ArgumentParser(description='Processes rosbag image topic from ffmpeg to foxglove compressed camera video. The mcap storage method is expected.')
     parser.add_argument('rosbag', type=str,
                         help='Input rosbag path')
-    parser.add_argument('--topic-from', type=str,
+    group = parser.add_mutually_exclusive_group(required=False)
+    group.add_argument('--topic-from', type=str,
                         default='/sensor_stack/cameras/zed2/zed_node/left/image_rect_color/ffmpeg',
                         help='FFMPEG topic name (default: "/sensor_stack/cameras/zed2/zed_node/left/image_rect_color/ffmpeg")')
+    group.add_argument('--topic-from-regex', type=str,
+                        help='Mutually exclusive with "--topic-from". Regex to filter input topic names. Output topic names will match them with /foxglove suffix instead of /ffmpeg.')
     parser.add_argument('--topic-to', type=str,
                         default='/sensor_stack/cameras/zed2/zed_node/left/image_rect_color/foxglove',
                         help='Foxglove topic name (default: "/sensor_stack/cameras/zed2/zed_node/left/image_rect_color/foxglove")')
