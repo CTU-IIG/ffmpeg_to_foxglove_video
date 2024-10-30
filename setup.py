@@ -17,10 +17,9 @@ setup(
     maintainer_email='Jan.Vojnar@cvut.cz',
     description='Tool to convert rosbag with ffmpeg camera topic to foxglove compressed video topic.',
     license='Proprietary',
-    tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'ffmpeg_to_fox = ffmpeg_to_foxglove.ffmpeg_to_fox:main',
+            'ffmpeg_to_fox = ffmpeg_to_foxglove_video.ffmpeg_to_fox:main',
         ],
     },
 )
