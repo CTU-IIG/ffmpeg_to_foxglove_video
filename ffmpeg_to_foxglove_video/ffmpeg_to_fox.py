@@ -115,7 +115,7 @@ class App():
         try:
             self.reader = rosbag2_py.SequentialReader()
             storage_options = rosbag2_py._storage.StorageOptions(
-                uri=input_path,
+                uri=str(input_path),
                 storage_id='mcap')
             converter_options = rosbag2_py._storage.ConverterOptions('', '')
             self.reader.open(storage_options, converter_options)
@@ -126,7 +126,7 @@ class App():
         # rosbag2 writer do not handle bad rosbag path well and can cause side-effects
         # like creating empty database or writing to existing database
         # we should check the path for user errors
-        if self.args.output == '':
+        if self.args.output != '':
             output_path = Path(self.args.output).expanduser().resolve()
         output_path = output_path.parent/Path(f"{output_path.name}{self.args.output_suffix}")
         # If Path exists
@@ -145,7 +145,7 @@ class App():
             print(f"Output rosbag path: {output_path}")
             self.writer = rosbag2_py.SequentialWriter()
             storage_options = rosbag2_py._storage.StorageOptions(
-                uri=output_path,
+                uri=str(output_path),
                 storage_id='mcap')
             converter_options = rosbag2_py._storage.ConverterOptions('', '')
             self.writer.open(storage_options, converter_options)
@@ -166,24 +166,26 @@ class App():
         for topic_info in old_topics:
             topic = topic_info.topic_metadata
             if regex is not None:
-                if (regex.fullmatch(topic.name)):
-                    matched_topics_old.append(topic.name)
+                if (regex.search(topic.name)):
                     old_topic_path = topic.name
+                    matched_topics_old.append(old_topic_path)
                     new_topic_path = old_topic_path[:old_topic_path.rfind('/')]+'/foxglove'
                     new_topic = rosbag2_py.TopicMetadata(
-                    name = old_topic_path,
-                    serialization_format = 'cdr',
-                    type = 'foxglove_msgs/msg/CompressedVideo')
+                        id = topic.id,
+                        name = str(new_topic_path),
+                        serialization_format = 'cdr',
+                        type = 'foxglove_msgs/msg/CompressedVideo')
                     self.writer.create_topic(new_topic)
                     matched_topics_new.append(new_topic_path)
                     msg_count += topic_info.message_count
-                    print('Target topic found.')
+                    print(f'Target topic found - {old_topic_path}')
                 else:
                     self.writer.create_topic(topic)
             else:
                 if (topic.name == self.args.topic_from):
                     new_topic = rosbag2_py.TopicMetadata(
-                        name = self.args.topic_to,
+                        id = topic.id,
+                        name = str(self.args.topic_to),
                         serialization_format = 'cdr',
                         type = 'foxglove_msgs/msg/CompressedVideo')
                     self.writer.create_topic(new_topic)
@@ -232,9 +234,12 @@ class App():
                     progress_msg = '{:3.0f} %'.format(progress_perc)
                     if progress_msg != last_progress_msg:
                         last_progress_msg = progress_msg
-                        print(progress_msg + ' - est. remaining time {:.0f}:{:02.0f}'.format(
-                            time_per_single * (msg_count + 1 - progress) // 60,
-                            time_per_single * (msg_count + 1 - progress) % 60))
+                        minutes = time_per_single * (msg_count + 1 - progress) // 60
+                        seconds = time_per_single * (msg_count + 1 - progress) % 60
+                        print(progress_msg + ' - est. remaining time {} {:.0f}:{:02.0f}'.format(
+                            '<' if (minutes == 0 and seconds < 1) else "~",
+                            minutes,
+                            1 if (minutes == 0 and seconds < 1) else seconds))
                 else:
                     self.writer.write(msg[0], msg[1], msg[2])
             else:
@@ -257,9 +262,12 @@ class App():
                     progress_msg = '{:3.0f} %'.format(progress_perc)
                     if progress_msg != last_progress_msg:
                         last_progress_msg = progress_msg
-                        print(progress_msg + ' - est. remaining time {:.0f}:{:02.0f}'.format(
-                            time_per_single * (msg_count + 1 - progress) // 60,
-                            time_per_single * (msg_count + 1 - progress) % 60))
+                        minutes = time_per_single * (msg_count + 1 - progress) // 60
+                        seconds = time_per_single * (msg_count + 1 - progress) % 60
+                        print(progress_msg + ' - est. remaining time {} {:.0f}:{:02.0f}'.format(
+                            '<' if (minutes == 0 and seconds < 1) else "~",
+                            minutes,
+                            1 if (minutes == 0 and seconds < 1) else seconds))
                 else:
                     self.writer.write(msg[0], msg[1], msg[2])
         print("Done")
@@ -295,7 +303,7 @@ def main():
     except Exception as ex:
         # There is no clear documentation what exceptions rosbag2_py or (de)serialization can throw,
         # so we need to find them hard way
-        message = f'Programmer\'s note: A new exception of type {type(ex).__module__}.{type(ex).__name__} occurred, please implement handling. Arguments:\n{ex.args}'
+        message = f'Programmer\'s note: An exception of type {type(ex).__module__}.{type(ex).__name__} occurred. Arguments:\n{ex.args}'
         print(message)
         raise
     sys.exit(exit_code)
