@@ -1,6 +1,6 @@
 from setuptools import setup
 
-package_name = 'ffmpeg_to_foxglove'
+package_name = 'ffmpeg_to_foxglove_video'
 
 setup(
     name=package_name,
