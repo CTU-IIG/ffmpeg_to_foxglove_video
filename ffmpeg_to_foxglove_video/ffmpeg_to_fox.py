@@ -46,7 +46,6 @@ def is_first_existing_parent_writable(path):
         if not file_path.exists():
             file_path = file_path.parent
         else:
-            print(file_path)
             writable = is_writable(file_path)
             break
     return writable
@@ -113,6 +112,7 @@ class App():
             print(f'A rosbag does not exist on the path or it is not ROS2 bag ("{input_path}").', file=sys.stderr)
             return App.ERROR
         try:
+            print(f"Input rosbag path: {input_path}")
             self.reader = rosbag2_py.SequentialReader()
             storage_options = rosbag2_py._storage.StorageOptions(
                 uri=str(input_path),
