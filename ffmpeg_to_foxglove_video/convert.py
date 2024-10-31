@@ -167,29 +167,28 @@ class App():
         old_topics = old_metadata.topics_with_message_count
 
         #regex data
-        matched_topics_old = []
-        matched_topics_new = []
+        matched_topics = {}
 
         for topic_info in old_topics:
             topic = topic_info.topic_metadata
             if regex is not None:
                 if (regex.search(topic.name)):
                     old_topic_path = topic.name
-                    matched_topics_old.append(old_topic_path)
                     new_topic_path = old_topic_path[:old_topic_path.rfind('/')]+'/foxglove'
+                    matched_topics[old_topic_path] = new_topic_path
                     new_topic = rosbag2_py.TopicMetadata(
                         id = topic.id,
                         name = str(new_topic_path),
                         serialization_format = 'cdr',
                         type = 'foxglove_msgs/msg/CompressedVideo')
                     self.writer.create_topic(new_topic)
-                    matched_topics_new.append(new_topic_path)
                     msg_count += topic_info.message_count
                     print(f'Target topic found - {old_topic_path}')
                 else:
                     self.writer.create_topic(topic)
             else:
                 if (topic.name == topic_from):
+                    matched_topics[topic_from] = topic_to
                     new_topic = rosbag2_py.TopicMetadata(
                         id = topic.id,
                         name = str(topic_to),
@@ -208,7 +207,7 @@ class App():
             # already handled 'path exists and not empty' ensures that we do not remove some other rosbag
             try_remove_empty_rosbag(output_path)
             return 1
-
+        
         time_start = time.time()
         time_per_single_window = deque(maxlen=int(msg_count/10))
         progress = 0.01
@@ -217,66 +216,34 @@ class App():
 
         while self.reader.has_next():
             msg = self.reader.read_next()
-            if regex is not None:
-                try:
-                    index = matched_topics_old.index(msg[0])
-                except ValueError:
-                    index = None
-                if index is not None:
-                    old_data = deserialize_message(msg[1], FFMPEGPacket)
-                    new_data = CompressedVideo(
-                        timestamp=old_data.header.stamp,
-                        frame_id = old_data.header.frame_id,
-                        data = old_data.data,
-                        format='h264')
-                    self.writer.write(
-                        matched_topics_new[index],
-                        serialize_message(new_data), msg[2])
+            new_topic_path = matched_topics.get(msg[0], default=None)
+            if new_topic_path is not None:
+                old_data = deserialize_message(msg[1], FFMPEGPacket)
+                new_data = CompressedVideo(
+                    timestamp=old_data.header.stamp,
+                    frame_id = old_data.header.frame_id,
+                    data = old_data.data,
+                    format='h264')
+                self.writer.write(
+                    new_topic_path,
+                    serialize_message(new_data), msg[2])
 
-                    progress += 1
-                    time_now = time.time()
-                    time_per_single_window.append((time_now-time_start)/progress)
-                    time_per_single = max(time_per_single_window)
-                    progress_perc = (progress*100)/msg_count
-                    progress_msg = '{:3.0f} %'.format(progress_perc)
-                    if progress_msg != last_progress_msg:
-                        last_progress_msg = progress_msg
-                        minutes = time_per_single * (msg_count + 1 - progress) // 60
-                        seconds = time_per_single * (msg_count + 1 - progress) % 60
-                        print(progress_msg + ' - est. remaining time {} {:.0f}:{:02.0f}'.format(
-                            '<' if (minutes == 0 and seconds < 1) else "~",
-                            minutes,
-                            1 if (minutes == 0 and seconds < 1) else seconds))
-                else:
-                    self.writer.write(msg[0], msg[1], msg[2])
+                progress += 1
+                time_now = time.time()
+                time_per_single_window.append((time_now-time_start)/progress)
+                time_per_single = max(time_per_single_window)
+                progress_perc = (progress*100)/msg_count
+                progress_msg = '{:3.0f} %'.format(progress_perc)
+                if progress_msg != last_progress_msg:
+                    last_progress_msg = progress_msg
+                    minutes = time_per_single * (msg_count + 1 - progress) // 60
+                    seconds = time_per_single * (msg_count + 1 - progress) % 60
+                    print(progress_msg + ' - est. remaining time {} {:.0f}:{:02.0f}'.format(
+                        '<' if (minutes == 0 and seconds < 1) else "~",
+                        minutes,
+                        1 if (minutes == 0 and seconds < 1) else seconds))
             else:
-                if (msg[0] == topic_from):
-                    old_data = deserialize_message(msg[1], FFMPEGPacket)
-                    new_data = CompressedVideo(
-                        timestamp=old_data.header.stamp,
-                        frame_id = old_data.header.frame_id,
-                        data = old_data.data,
-                        format='h264')
-                    self.writer.write(
-                        topic_to,
-                        serialize_message(new_data), msg[2])
-
-                    progress += 1
-                    time_now = time.time()
-                    time_per_single_window.append((time_now-time_start)/progress)
-                    time_per_single = max(time_per_single_window)
-                    progress_perc = (progress*100)/msg_count
-                    progress_msg = '{:3.0f} %'.format(progress_perc)
-                    if progress_msg != last_progress_msg:
-                        last_progress_msg = progress_msg
-                        minutes = time_per_single * (msg_count + 1 - progress) // 60
-                        seconds = time_per_single * (msg_count + 1 - progress) % 60
-                        print(progress_msg + ' - est. remaining time {} {:.0f}:{:02.0f}'.format(
-                            '<' if (minutes == 0 and seconds < 1) else "~",
-                            minutes,
-                            1 if (minutes == 0 and seconds < 1) else seconds))
-                else:
-                    self.writer.write(msg[0], msg[1], msg[2])
+                self.writer.write(msg[0], msg[1], msg[2])
         print("Done")
         return 0
 
