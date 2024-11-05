@@ -216,7 +216,7 @@ class App():
 
         while self.reader.has_next():
             msg = self.reader.read_next()
-            new_topic_path = matched_topics.get(msg[0], default=None)
+            new_topic_path = matched_topics.get(msg[0], None)
             if new_topic_path is not None:
                 old_data = deserialize_message(msg[1], FFMPEGPacket)
                 new_data = CompressedVideo(
