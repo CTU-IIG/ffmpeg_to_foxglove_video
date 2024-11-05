@@ -19,7 +19,7 @@ setup(
     license='Proprietary',
     entry_points={
         'console_scripts': [
-            'ffmpeg_to_fox = ffmpeg_to_foxglove_video.convert:main',
+            'convert = ffmpeg_to_foxglove_video.convert:main',
         ],
     },
 )
