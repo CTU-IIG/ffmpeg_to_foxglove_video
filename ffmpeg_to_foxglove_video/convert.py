@@ -91,16 +91,24 @@ class App():
         self.args = args
 
     def run(self):
-        #check regex if typed in
         regex = None
-        if self.args.topic_from_regex is not None:
+        #check topic_from ff typed in, then do not save default regex
+        #else if regex is typed in, then use it
+        if self.args.from_topic is not None:
+            topic_from = self.args.from_topic
+            # we assume that user behaves normally and topic_from is ffmpeg named subpath of some video topic
+            # with ffmpeg compression method so parent of topic_from should be topic name of the video topic
+            topic_to = topic_from[:topic_from.rfind('/')]+'/foxglove'
+            if self.args.to_topic != '':
+                topic_to = self.args.to_topic
+        else:
             try:
-                regex = re.compile(self.args.topic_from_regex)
+                regex = re.compile(self.args.regex)
             except re.error as ex:
-                print(f'The input regex is not a valid regular expression ("{self.args.topic_from_regex}").', file=sys.stderr)
+                print(f'The input regex is not a valid regular expression ("{self.args.regex}").', file=sys.stderr)
                 raise
 
-        input_path = Path(self.args.rosbag).expanduser().resolve()
+        input_path = Path(self.args.input).expanduser().resolve()
         # rosbag2 reader do not handle bad rosbag path well, we should check for user errors
         if not input_path.exists():
             print(f'The input rosbag does not exist on the path ("{input_path}").', file=sys.stderr)
@@ -128,7 +136,7 @@ class App():
         # we should check the path for user errors
         if self.args.output != '':
             output_path = Path(self.args.output).expanduser().resolve()
-        output_path = output_path.parent/Path(f"{output_path.name}{self.args.output_suffix}")
+        output_path = output_path.parent/Path(f"{output_path.name}{self.args.suffix}")
         # If Path exists
         if output_path.exists():
             #and If it is directory, is it empty?
@@ -155,13 +163,6 @@ class App():
             try_remove_empty_rosbag(output_path)
             raise
 
-        topic_from = self.args.topic_from
-        # we assume that user behaves normally and topic_from is ffmpeg named subpath of some video topic
-        # with ffmpeg compression method so parent of topic_from should be topic name of the video topic
-        topic_to = topic_from[:topic_from.rfind('/')]+'/foxglove'
-        if self.args.topic_to != '':
-            topic_to = self.args.topic_to
-
         msg_count = 0
         old_metadata = self.reader.get_metadata()
         old_topics = old_metadata.topics_with_message_count
@@ -183,7 +184,9 @@ class App():
                         type = 'foxglove_msgs/msg/CompressedVideo')
                     self.writer.create_topic(new_topic)
                     msg_count += topic_info.message_count
-                    print(f'Target topic found - {old_topic_path}')
+                    print(f'Target topic found: {old_topic_path}')
+                    if self.args.keep_input:
+                        self.writer.create_topic(topic)
                 else:
                     self.writer.create_topic(topic)
             else:
@@ -197,6 +200,8 @@ class App():
                     self.writer.create_topic(new_topic)
                     msg_count = topic_info.message_count
                     print('Target topic found.')
+                    if self.args.keep_input:
+                        self.writer.create_topic(topic)
                 else:
                     self.writer.create_topic(topic)
         
@@ -227,46 +232,63 @@ class App():
                 self.writer.write(
                     new_topic_path,
                     serialize_message(new_data), msg[2])
+                if self.args.keep_input:
+                    self.writer.write(msg[0], msg[1], msg[2])
 
-                progress += 1
-                time_now = time.time()
-                time_per_single_window.append((time_now-time_start)/progress)
-                time_per_single = max(time_per_single_window)
-                progress_perc = (progress*100)/msg_count
-                progress_msg = '{:3.0f} %'.format(progress_perc)
-                if progress_msg != last_progress_msg:
-                    last_progress_msg = progress_msg
-                    minutes = time_per_single * (msg_count + 1 - progress) // 60
-                    seconds = time_per_single * (msg_count + 1 - progress) % 60
-                    print(progress_msg + ' - est. remaining time {} {:.0f}:{:02.0f}'.format(
-                        '<' if (minutes == 0 and seconds < 1) else "~",
-                        minutes,
-                        1 if (minutes == 0 and seconds < 1) else seconds))
+                if not self.args.no_progress:
+                    progress += 1
+                    time_now = time.time()
+                    time_per_single_window.append((time_now-time_start)/progress)
+                    time_per_single = max(time_per_single_window)
+                    progress_perc = (progress*100)/msg_count
+                    progress_msg = '{:3.0f} %'.format(progress_perc)
+                    if progress_msg != last_progress_msg:
+                        last_progress_msg = progress_msg
+                        minutes = time_per_single * (msg_count + 1 - progress) // 60
+                        seconds = time_per_single * (msg_count + 1 - progress) % 60
+                        print(progress_msg + ' - est. remaining time {} {:.0f}:{:02.0f}'.format(
+                            '<' if (minutes == 0 and seconds < 1) else "~",
+                            minutes,
+                            1 if (minutes == 0 and seconds < 1) else seconds))
             else:
                 self.writer.write(msg[0], msg[1], msg[2])
         print("Done")
         return 0
 
+_DESC = \
+'''Processes a ROS bag image topic from ffmpeg to foxglove compressed camera video. The mcap storage method is expected.
+
+example: convert /rosbags/input_bag/
+To convert input ROS bag into new "/rosbag/input_bag_foxglove/" where every topic ending with "/ffmpeg" is converted to "/foxglove".
+'''
+
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description='Processes rosbag image topic from ffmpeg to foxglove compressed camera video. The mcap storage method is expected.')
-    parser.add_argument('rosbag', type=str,
-                        help='Input rosbag path')
-    group = parser.add_mutually_exclusive_group(required=False)
-    group.add_argument('--topic-from', type=str,
-                        default='/sensor_stack/cameras/zed2/zed_node/left/image_rect_color/ffmpeg',
-                        help='FFMPEG topic name (default: "/sensor_stack/cameras/zed2/zed_node/left/image_rect_color/ffmpeg")')
-    group.add_argument('--topic-from-regex', type=str,
-                        help='Mutually exclusive with "--topic-from". Regex to filter input topic names. Output topic names will match them with /foxglove suffix instead of /ffmpeg.')
-    parser.add_argument('--topic-to', type=str,
+    parser = argparse.ArgumentParser(description=_DESC,
+                                     epilog='Note: In case of an error, the output ROS bag may be created but empty.',
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('input', type=str,
+                        help='the input rosbag path')
+    group_from = parser.add_argument_group('source topics (mutually exclusive; default is --regex)')#, 'Source topics from which the video will be converted')
+    group_ex = group_from.add_mutually_exclusive_group(required=False)
+    group_ex.add_argument('--from-topic', type=str, metavar='TOPIC',
+                        help='ffmpeg topic name (example: "/sensors/camera/image/ffmpeg")')
+    group_ex.add_argument('--regex', type=str, default='/ffmpeg$',
+                        help='regex to filter input topic names (default = "/ffmpeg$")')
+    group_to = parser.add_argument_group('destination topics (applies to --from-topic)')#, 'Destination topics to which the video will be converted.')
+    group_to.add_argument('--to-topic', type=str, metavar='TOPIC',
                         default='',
-                        help='Foxglove topic name (default: "/sensor_stack/cameras/zed2/zed_node/left/image_rect_color/foxglove")')
-    parser.add_argument('--output', type=str,
+                        help='foxglove topic name (example: "/sensors/camera/image/foxglove")',)
+    parser.add_argument('--output', type=str, metavar='PATH',
                         default='',
-                        help='Path of the output rosbag, will use input rosbag path if empty')
-    parser.add_argument('--output-suffix', type=str,
+                        help='path of the output rosbag (default: input path)')
+    parser.add_argument('--suffix', type=str,
                         default='_foxglove',
-                        help='Suffix of the output rosbag')
+                        help='suffix of the output rosbag (default: "_foxglove")')
+    parser.add_argument('-p', '--no-progress', action="store_true",
+                        help='disable printing of the percentage progress')
+    parser.add_argument('-k', '--keep-input', action="store_true",
+                        help='keep input topics while adding new output topics')
     args = parser.parse_args()
 
     app = App(args)
