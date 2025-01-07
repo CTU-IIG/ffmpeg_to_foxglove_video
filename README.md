@@ -15,11 +15,18 @@ This is basic usage, where the only converted topics are ffmpeg camera image str
 ros2 run ffmpeg_to_foxglove_video convert path_to_input_rosbag/ --regex "zed2/zed_node/left/image_rect_color/ffmpeg$"
 ```
 
-The command above converts every topic ending with "zed2/zed_node/left/image_rect_color/ffmpeg". It will specifically convert the left camera output video stream compressed by ffmpeg of the ZED2 camera.
+The command above converts every topic ending with `zed2/zed_node/left/image_rect_color/ffmpeg`. It will specifically convert the left camera output video stream compressed by ffmpeg of the ZED2 camera.
 
-Users can customize the output ROS bag path using `---output` or `--output-suffix` (e.g., "_foxglove"), convert the input ROS bag while keep the input ffmpeg video stream using the `-k` flag, or disable printing of the progress using the `-p` flag. See `ros2 run ffmpeg_to_foxglove_video convert --help` for more details.
+Users can customize the output ROS bag path using `---output` or `--output-suffix` (e.g., `_foxglove`), convert the input ROS bag while keep the input ffmpeg video stream using the `-k` flag, or disable printing of the progress using the `-p` flag. See `ros2 run ffmpeg_to_foxglove_video convert --help` for more details.
 
-!!! Note: The foxglove_video transport messages do not have the header (`std_msgs/Header`), which means there are no timestamps of each frame. This renders foxglove_video transport useless as default compression method, because we wouldn't be able to process video based on frame timestamp or to restamp it (see **Removing delays of ROS bag messages** in [data/bags/README.md](../../../data/bags/README.md)).
+> [!NOTE]
+> The foxglove_video transport messages do not have the header
+> (`std_msgs/Header`), which means there are no timestamps of each
+> frame. This renders foxglove_video transport useless as default
+> compression method, because we wouldn't be able to process video
+> based on frame timestamp or to restamp with [ros2bag_tools][].
+
 
 [ffmpeg_to_foxglove_video]: ../../ros2_ws/src/ffmpeg_to_foxglove_video/
 [ffmpeg_image_transport]: https://github.com/ros-misc-utilities/ffmpeg_image_transport
+[ros2bag_tools]: https://github.com/AIT-Assistive-Autonomous-Systems/ros2bag_tools
